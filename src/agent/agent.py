@@ -42,54 +42,73 @@ class ReActAgent:
         """
 
     def run(self, user_input: str) -> str:
+        # 1. Khởi động và Log vào file
         logger.log_event("AGENT_START", {"input": user_input, "model": self.llm.model_name})
+        print(f" [START AGENT]: {user_input}")
+        
         self.history = [f"Question: {user_input}"]
         steps = 0
 
         while steps < self.max_steps:
             current_prompt = "\n".join(self.history)
             
-            # 1. Gọi LLM
+            # 2. Gọi LLM
             response = self.llm.generate(current_prompt, system_prompt=self.get_system_prompt())
             
-            # --- SỬA TẠI ĐÂY ---
-            # Nếu response là Dictionary (như log bạn gửi), ta lấy ['content']
-            # Nếu response đã là string sẵn rồi, thì giữ nguyên.
             if isinstance(response, dict):
                 result = response.get('content', "")
             else:
                 result = response if response is not None else ""
-            # --------------------
 
-            print(f"\n--- STEP {steps + 1} ---\n{result}")
+            # Ghi Log Thought vào file & In ra Terminal
+            logger.log_event("AGENT_THOUGHT", {"step": steps + 1, "content": result})
+            print(f"\n--- STEP {steps + 1} ---")
+            thought = result.split("Action:")[0].replace("Thought:", "").strip()
+            if thought:
+                print(f" [THOUGHT]: {thought}")
+
             self.history.append(result)
 
-            # 2. Kiểm tra Final Answer TRƯỚC (Để thoát ngay nếu xong)
+            # 3. Kiểm tra Final Answer
             if "Final Answer:" in result:
                 final_answer = result.split("Final Answer:")[-1].strip()
-                logger.log_event("AGENT_END", {"steps": steps + 1})
+                logger.log_event("AGENT_FINAL_ANSWER", {"answer": final_answer})
+                print(f" [FINAL]: {final_answer}")
                 return final_answer
 
-            # 3. Parse Action
+            # 4. Parse Action
             action_match = re.search(r"Action:\s*(\w+)\((.*)\)", result)
             
             if action_match:
                 tool_name = action_match.group(1)
                 tool_args = action_match.group(2)
                 
-                # 4. Thực thi Tool
+                logger.log_event("AGENT_ACTION", {"tool": tool_name, "args": tool_args})
+                print(f"  [ACTION]: Calling {tool_name}({tool_args})")
+                
+                # Thực thi Tool
                 observation = self._execute_tool(tool_name, tool_args)
                 obs_message = f"Observation: {observation}"
-                print(f"[TOOL RESULT]: {obs_message}")
+                
+                # Ghi Log Observation vào file (Lưu vết lỗi Phase 4)
+                logger.log_event("AGENT_OBSERVATION", {"result": observation})
+                
+                if "Error" in observation or "missing" in observation:
+                    print(f" [TOOL ERROR]: {observation}")
+                else:
+                    print(f"  [OBSERVATION]: {observation}")
+                
                 self.history.append(obs_message)
             else:
-                # Chỉ báo lỗi nếu không tìm thấy cả Action lẫn Final Answer
-                error_msg = "Observation: Invalid format. Please use 'Action: tool_name(args)' or 'Final Answer: answer'."
-                self.history.append(error_msg)
+                # Ghi Log lỗi định dạng vào file
+                logger.log_event("AGENT_FORMAT_ERROR", {"step": steps + 1})
+                print(f" [FORMAT ERROR]: AI không đưa ra Action đúng quy định.")
+                self.history.append("Observation: Invalid format. Please use 'Action: tool_name(args)'.")
             
             steps += 1
             
-        logger.log_event("AGENT_END", {"steps": steps})
+        logger.log_event("AGENT_END_MAX_STEPS", {"steps": steps})
+        print(f" [STOP]: Hết {self.max_steps} bước.")
         return "I'm sorry, I couldn't finish the task within the maximum steps."
 
     def _execute_tool(self, tool_name: str, args: str) -> str:

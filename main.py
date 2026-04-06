@@ -34,7 +34,7 @@ def main():
 
     # 4. Chạy thử
     user_query = "Đặt 2 vé phim Zootopia 2 tại HCM tối nay"
-    print(f"🚀 User: {user_query}")
+    print(f" User: {user_query}")
     
     result = agent.run(user_query)
     
